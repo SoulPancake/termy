@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"os/exec"
 )
 
 func main() {
 	app := tview.NewApplication()
-	text := []string{""} // Text buffer, each entry is a line
+	commandBuffer := "" // Buffer to store the current command line input
+	outputBuffer := ""  // Buffer to store the output of executed commands
 	cursorX, cursorY := 0, 0
 
 	textView := tview.NewTextView().
@@ -18,85 +22,57 @@ func main() {
 			app.Draw()
 		})
 
-	textView.SetBorder(true).SetTitle("Go Text Editor")
+	textView.SetBorder(true).SetTitle("Go Terminal")
 
-	// Display cursor
+	// Update the text view with the current buffers and cursor position
 	updateTextView := func() {
 		textView.Clear()
-		for i, line := range text {
-			if i == cursorY {
-				textView.Write([]byte(line[:cursorX] + "|" + line[cursorX:]))
-			} else {
-				textView.Write([]byte(line))
-			}
-			textView.Write([]byte("\n"))
-		}
+		fmt.Fprintf(textView, "%s\n$ %s", outputBuffer, commandBuffer)
+		textView.Highlight(fmt.Sprintf("cursor_%d_%d", cursorY, cursorX))
 	}
 
-	// Allow editing text
+	// Execute a command and capture the output
+	executeCommand := func(command string) {
+		cmd := exec.Command("cmd", "/c", command)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		err := cmd.Run()
+		if err != nil {
+			outputBuffer += fmt.Sprintf("error: %v\n", err)
+		}
+		outputBuffer += out.String()
+	}
+
+	// Handle input for command line
 	textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyCtrlC:
 			app.Stop()
 			return nil
-		case tcell.KeyCtrlS:
-			// Handle save logic here (e.g., write to file)
-			return nil
-		case tcell.KeyUp:
-			if cursorY > 0 {
-				cursorY--
-				if cursorX > len(text[cursorY]) {
-					cursorX = len(text[cursorY])
-				}
-			}
-		case tcell.KeyDown:
-			if cursorY < len(text)-1 {
-				cursorY++
-				if cursorX > len(text[cursorY]) {
-					cursorX = len(text[cursorY])
-				}
-			}
-		case tcell.KeyLeft:
-			if cursorX > 0 {
-				cursorX--
-			} else if cursorY > 0 {
-				cursorY--
-				cursorX = len(text[cursorY])
-			}
-		case tcell.KeyRight:
-			if cursorX < len(text[cursorY]) {
-				cursorX++
-			} else if cursorY < len(text)-1 {
-				cursorY++
-				cursorX = 0
-			}
-		case tcell.KeyBackspace, tcell.KeyBackspace2:
-			if cursorX > 0 {
-				line := text[cursorY]
-				text[cursorY] = line[:cursorX-1] + line[cursorX:]
-				cursorX--
-			} else if cursorY > 0 {
-				prevLine := text[cursorY-1]
-				text = append(text[:cursorY], text[cursorY+1:]...)
-				cursorY--
-				cursorX = len(prevLine)
-				text[cursorY] = prevLine + text[cursorY]
-			}
 		case tcell.KeyEnter:
-			line := text[cursorY]
-			text[cursorY] = line[:cursorX]
-			text = append(text[:cursorY+1], append([]string{line[cursorX:]}, text[cursorY+1:]...)...)
-			cursorY++
-			cursorX = 0
+			executeCommand(commandBuffer)
+			commandBuffer = ""
+		case tcell.KeyBackspace, tcell.KeyBackspace2:
+			if len(commandBuffer) > 0 {
+				commandBuffer = commandBuffer[:len(commandBuffer)-1]
+			}
 		default:
 			if event.Key() == tcell.KeyRune {
-				line := text[cursorY]
-				text[cursorY] = line[:cursorX] + string(event.Rune()) + line[cursorX:]
-				cursorX++
+				commandBuffer += string(event.Rune())
 			}
 		}
 		updateTextView()
 		return event
+	})
+
+	// Handle mouse events for cursor movement
+	textView.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+		if action == tview.MouseLeftClick {
+			_, cy := event.Position()
+			cursorY = cy
+			updateTextView()
+		}
+		return action, event
 	})
 
 	updateTextView()
